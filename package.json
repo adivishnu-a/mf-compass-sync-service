@@ -1,0 +1,22 @@
+{
+  "name": "mf-compass-sync-service",
+  "version": "1.0.0",
+  "description": "Backend sync service for MF Compass - fetches and processes mutual fund data",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "seed": "node seeder.js",
+    "daily-update": "node daily-updater.js",
+    "flush-db": "node flush-database.js",
+    "start": "node index.js",
+    "test-db": "node test-db.js"
+  },
+  "keywords": ["mutual-fund", "nav", "sync", "postgres"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "dotenv": "^17.0.1",
+    "pg": "^8.16.3"
+  }
+}

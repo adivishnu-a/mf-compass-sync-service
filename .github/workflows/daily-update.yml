@@ -1,0 +1,46 @@
+name: Daily MF Data Update
+
+on:
+  schedule:
+    # Runs at 10:30 AM IST (5:00 AM UTC) every day
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  update-nav-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: package.json
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run daily NAV update
+      run: npm run daily-update
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_PORT: ${{ secrets.DB_PORT }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        MF_API_BASE_URL: ${{ secrets.MF_API_BASE_URL }}
+        NODE_ENV: production
+    
+    - name: Upload logs (if failure)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: update-logs
+        path: '*.log'
+        retention-days: 7
