@@ -2,10 +2,10 @@ name: Daily MF Data Update
 
 on:
   schedule:
-    # Runs at 00:15 AM IST (18:45 UTC previous day)
-    - cron: '45 18 * * *'
-    # Runs at 10:15 AM IST (04:45 UTC)
-    - cron: '45 4 * * *'
+    # Runs at 01:00 AM IST (19:30 UTC previous day) on Tuesday-Saturday (i.e., 19:30 UTC Monday-Friday)
+    - cron: '30 19 * * 1-5'
+    # Runs at 10:30 AM IST (05:00 UTC) on Tuesday-Saturday
+    - cron: '00 5 * * 2-6'
   workflow_dispatch:
     # Allow manual triggering
 

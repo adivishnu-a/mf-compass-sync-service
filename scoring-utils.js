@@ -1,6 +1,6 @@
 /**
  * MF Compass Scoring System
- * Calculates weighted performance scores for mutual funds based on historical returns
+ * Calculates weighted outperformance scores for mutual funds based on category relative performance
  * Implements category-wise normalization for fair comparison
  */
 
@@ -8,26 +8,27 @@ class ScoringUtils {
   constructor() {
     // Base weights for different return periods
     this.baseWeights = {
-      returns_1y: 0.50,   // 50% - Most important (full market cycle)
-      returns_3y: 0.25,   // 25% - Medium-term consistency
-      returns_5y: 0.20,   // 20% - Long-term performance
-      returns_1w: 0.05    // 5% - Recent momentum (minimal weight)
+      returns_1y: 0.3499,   // ~35% - Most important (full market cycle)
+      returns_3y: 0.3999,   // ~40% - Medium-term consistency
+      returns_5y: 0.2499,   // ~25% - Long-term performance
+      returns_1w: 0.0003    // Neglible but included - Recent momentum (minimal weight)
     };
   }
 
   /**
-   * Calculate raw score for a single fund based on weighted returns
+   * Calculate raw score for a single fund based on weighted outperformance over category averages
    * @param {Object} fundData - Fund data object with return fields
+   * @param {Object} categoryAverages - Category averages data
    * @returns {Object} - Score calculation result
    */
-  calculateFundScore(fundData) {
+  calculateFundScore(fundData, categoryAverages = null) {
     try {
-      const rawScore = this.calculateRawScore(fundData);
+      const rawScore = this.calculateRawScore(fundData, categoryAverages);
       
       return {
         total_score: Math.round(rawScore * 100) / 100, // Round to 2 decimal places
         calculation_date: new Date().toISOString(),
-        score_components: this.getScoreComponents(fundData)
+        score_components: this.getScoreComponents(fundData, categoryAverages)
       };
     } catch (error) {
       console.error('Error calculating fund score:', error);
@@ -40,11 +41,86 @@ class ScoringUtils {
   }
 
   /**
-   * Calculate raw weighted score based on available returns data
+   * Calculate raw weighted score based on outperformance over category averages
    * @param {Object} fundData - Fund data with return fields
-   * @returns {number} - Raw weighted score
+   * @param {Object} categoryAverages - Category averages data
+   * @returns {number} - Raw weighted outperformance score
    */
-  calculateRawScore(fundData) {
+  calculateRawScore(fundData, categoryAverages = null) {
+    const { returns_1y, returns_3y, returns_5y, returns_1w, fund_category, fund_type } = fundData;
+    
+    // If no category averages provided, fall back to absolute returns (backward compatibility)
+    if (!categoryAverages) {
+      return this.calculateAbsoluteReturnsScore(fundData);
+    }
+    
+    // Determine which category to compare against
+    let categoryName;
+    if (fund_type && fund_type.toLowerCase().includes('equity')) {
+      categoryName = fund_category; // Use fund_category for equity funds
+    } else if (fund_type && fund_type.toLowerCase().includes('hybrid')) {
+      categoryName = 'Hybrid'; // Use "Hybrid" for hybrid funds
+    } else {
+      categoryName = fund_category; // Default to fund_category for other funds
+    }
+    
+    // Find matching category averages
+    const categoryAvg = categoryAverages[categoryName];
+    if (!categoryAvg) {
+      console.warn(`No category averages found for ${categoryName}, falling back to absolute returns`);
+      return this.calculateAbsoluteReturnsScore(fundData);
+    }
+    
+    // Calculate adjusted weights based on available data
+    let totalAvailableWeight = 0;
+    const outperformanceReturns = {};
+    
+    // Calculate outperformance for each return period
+    if (returns_1y !== null && returns_1y !== undefined && !isNaN(returns_1y) && 
+        categoryAvg.returns_1y !== null && categoryAvg.returns_1y !== undefined && !isNaN(categoryAvg.returns_1y)) {
+      outperformanceReturns.returns_1y = (parseFloat(returns_1y) - parseFloat(categoryAvg.returns_1y))/parseFloat(categoryAvg.returns_1y);
+      totalAvailableWeight += this.baseWeights.returns_1y;
+    }
+    
+    if (returns_3y !== null && returns_3y !== undefined && !isNaN(returns_3y) && 
+        categoryAvg.returns_3y !== null && categoryAvg.returns_3y !== undefined && !isNaN(categoryAvg.returns_3y)) {
+      outperformanceReturns.returns_3y = (parseFloat(returns_3y) - parseFloat(categoryAvg.returns_3y))/parseFloat(categoryAvg.returns_3y);
+      totalAvailableWeight += this.baseWeights.returns_3y;
+    }
+    
+    if (returns_5y !== null && returns_5y !== undefined && !isNaN(returns_5y) && 
+        categoryAvg.returns_5y !== null && categoryAvg.returns_5y !== undefined && !isNaN(categoryAvg.returns_5y)) {
+      outperformanceReturns.returns_5y = (parseFloat(returns_5y) - parseFloat(categoryAvg.returns_5y))/parseFloat(categoryAvg.returns_5y);
+      totalAvailableWeight += this.baseWeights.returns_5y;
+    }
+    
+    if (returns_1w !== null && returns_1w !== undefined && !isNaN(returns_1w) && 
+        categoryAvg.returns_1w !== null && categoryAvg.returns_1w !== undefined && !isNaN(categoryAvg.returns_1w)) {
+      outperformanceReturns.returns_1w = (parseFloat(returns_1w) - parseFloat(categoryAvg.returns_1w))/parseFloat(categoryAvg.returns_1w);
+      totalAvailableWeight += this.baseWeights.returns_1w;
+    }
+    
+    // If no outperformance data available, return 0
+    if (totalAvailableWeight === 0) {
+      return 0;
+    }
+    
+    // Calculate weighted outperformance score with normalized weights
+    let totalScore = 0;
+    Object.keys(outperformanceReturns).forEach(key => {
+      const adjustedWeight = this.baseWeights[key] / totalAvailableWeight;
+      totalScore += outperformanceReturns[key] * adjustedWeight;
+    });
+    
+    return totalScore;
+  }
+
+  /**
+   * Fallback method for absolute returns scoring (backward compatibility)
+   * @param {Object} fundData - Fund data with return fields
+   * @returns {number} - Raw weighted score based on absolute returns
+   */
+  calculateAbsoluteReturnsScore(fundData) {
     const { returns_1y, returns_3y, returns_5y, returns_1w } = fundData;
     
     // Calculate adjusted weights based on available data
@@ -90,9 +166,78 @@ class ScoringUtils {
   /**
    * Get detailed score components for transparency
    * @param {Object} fundData - Fund data object
+   * @param {Object} categoryAverages - Category averages data
    * @returns {Object} - Score breakdown
    */
-  getScoreComponents(fundData) {
+  getScoreComponents(fundData, categoryAverages = null) {
+    const { returns_1y, returns_3y, returns_5y, returns_1w, fund_category, fund_type } = fundData;
+    
+    const components = {};
+    let totalWeight = 0;
+    
+    // If no category averages, use absolute returns
+    if (!categoryAverages) {
+      return this.getAbsoluteReturnsComponents(fundData);
+    }
+    
+    // Determine category name
+    let categoryName;
+    if (fund_type && fund_type.toLowerCase().includes('equity')) {
+      categoryName = fund_category;
+    } else if (fund_type && fund_type.toLowerCase().includes('hybrid')) {
+      categoryName = 'Hybrid';
+    } else {
+      categoryName = fund_category;
+    }
+    
+    const categoryAvg = categoryAverages[categoryName];
+    if (!categoryAvg) {
+      return this.getAbsoluteReturnsComponents(fundData);
+    }
+    
+    // Calculate available weights for outperformance
+    const returnPairs = [
+      { fund: returns_1y, category: categoryAvg.returns_1y, key: 'returns_1y' },
+      { fund: returns_3y, category: categoryAvg.returns_3y, key: 'returns_3y' },
+      { fund: returns_5y, category: categoryAvg.returns_5y, key: 'returns_5y' },
+      { fund: returns_1w, category: categoryAvg.returns_1w, key: 'returns_1w' }
+    ];
+    
+    returnPairs.forEach(pair => {
+      if (pair.fund !== null && pair.fund !== undefined && !isNaN(pair.fund) &&
+          pair.category !== null && pair.category !== undefined && !isNaN(pair.category)) {
+        totalWeight += this.baseWeights[pair.key];
+      }
+    });
+    
+    // Calculate component contributions based on outperformance
+    returnPairs.forEach(pair => {
+      if (pair.fund !== null && pair.fund !== undefined && !isNaN(pair.fund) &&
+          pair.category !== null && pair.category !== undefined && !isNaN(pair.category)) {
+        
+        const fundReturn = parseFloat(pair.fund);
+        const categoryReturn = parseFloat(pair.category);
+        const outperformance = fundReturn - categoryReturn;
+        
+        components[pair.key] = {
+          fund_value: fundReturn,
+          category_value: categoryReturn,
+          outperformance: outperformance,
+          weight: this.baseWeights[pair.key] / totalWeight,
+          contribution: outperformance * (this.baseWeights[pair.key] / totalWeight)
+        };
+      }
+    });
+    
+    return components;
+  }
+
+  /**
+   * Get absolute returns components (fallback)
+   * @param {Object} fundData - Fund data object
+   * @returns {Object} - Score breakdown
+   */
+  getAbsoluteReturnsComponents(fundData) {
     const { returns_1y, returns_3y, returns_5y, returns_1w } = fundData;
     
     const components = {};
@@ -305,21 +450,27 @@ class ScoringUtils {
    */
   getScoringMethodology() {
     return {
-      description: 'Weighted performance scoring based on historical returns',
+      description: 'Weighted outperformance scoring based on category relative performance',
       weights: this.baseWeights,
       normalization: '50-100 range within fund categories',
       rationale: {
-        'returns_1y': 'Most important - captures full market cycle',
-        'returns_3y': 'Medium-term consistency across market conditions',
-        'returns_5y': 'Long-term fund management capability',
-        'returns_1w': 'Recent momentum (minimal weight)'
+        'returns_1y': 'Most important - captures full market cycle outperformance',
+        'returns_3y': 'Medium-term consistency over category average',
+        'returns_5y': 'Long-term outperformance capability',
+        'returns_1w': 'Recent momentum relative to category'
       },
       process: [
-        '1. Calculate raw weighted score based on available returns',
-        '2. Group funds by category (equity by fund_category, hybrid by fund_type)',
-        '3. Normalize scores within each category to 50-100 range',
-        '4. Linear scaling: (score - min) / (max - min) * 50 + 50'
-      ]
+        '1. Calculate outperformance (fund_return - category_average) for each period',
+        '2. Apply weighted scoring based on available outperformance data',
+        '3. Group funds by category (equity by fund_category, hybrid by fund_type)',
+        '4. Normalize scores within each category to 50-100 range',
+        '5. Linear scaling: (score - min) / (max - min) * 50 + 50'
+      ],
+      category_matching: {
+        'equity_funds': 'Match fund_category with category_averages.category_name',
+        'hybrid_funds': 'Match fund_type with "Hybrid" category_averages.category_name',
+        'fallback': 'Use absolute returns if no category averages available'
+      }
     };
   }
 }

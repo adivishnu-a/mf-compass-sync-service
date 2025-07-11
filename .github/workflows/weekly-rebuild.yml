@@ -1,9 +1,12 @@
-name: Monthly MF Data Rebuild
+name: Weekly MF Data Rebuild
 
 on:
   schedule:
-    # Run at 2:00 AM IST (20:30 UTC previous day) on the 2nd day of every month
-    - cron: '30 20 2 * *'
+    # Run at 1:00 AM IST (19:30 UTC previous day) on Sunday only
+    - cron: '30 19 * * 6'
+  push:
+    # Trigger rebuild when code is pushed to main branch to ensure database stays in sync with latest changes
+    branches: [ main ]
   workflow_dispatch:
     # Also allow manual triggering
 

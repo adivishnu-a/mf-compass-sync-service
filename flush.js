@@ -16,24 +16,36 @@ async function flushDatabase() {
   try {
     await client.query('BEGIN');
     
-    console.log('Step 1: Dropping funds table...');
+    console.log('Step 1: Dropping tables...');
     
-    // Drop the main funds table (this is the only table we actually have)
+    // Drop both tables
     await client.query('DROP TABLE IF EXISTS funds CASCADE');
     console.log('  ✅ Dropped funds table');
     
+    await client.query('DROP TABLE IF EXISTS category_averages CASCADE');
+    console.log('  ✅ Dropped category_averages table');
+    
     console.log('Step 2: Dropping indexes...');
     
-    // Drop the actual indexes created by seed.js
-    const indexQueries = [
+    // Drop indexes for funds table
+    const fundsIndexQueries = [
       'DROP INDEX IF EXISTS idx_funds_kuvera_code CASCADE',
       'DROP INDEX IF EXISTS idx_funds_isin CASCADE',
       'DROP INDEX IF EXISTS idx_funds_fund_category CASCADE',
       'DROP INDEX IF EXISTS idx_funds_fund_house CASCADE',
-      'DROP INDEX IF EXISTS idx_funds_fund_type CASCADE'
+      'DROP INDEX IF EXISTS idx_funds_fund_type CASCADE',
+      'DROP INDEX IF EXISTS idx_funds_total_score CASCADE'
     ];
     
-    for (const query of indexQueries) {
+    // Drop indexes for category_averages table
+    const categoryIndexQueries = [
+      'DROP INDEX IF EXISTS idx_category_averages_category_name CASCADE',
+      'DROP INDEX IF EXISTS idx_category_averages_report_date CASCADE'
+    ];
+    
+    const allIndexQueries = [...fundsIndexQueries, ...categoryIndexQueries];
+    
+    for (const query of allIndexQueries) {
       try {
         await client.query(query);
       } catch (error) {
@@ -44,8 +56,9 @@ async function flushDatabase() {
     
     console.log('Step 3: Dropping sequences...');
     
-    // Drop the sequence created with SERIAL column
+    // Drop sequences created with SERIAL columns
     await client.query('DROP SEQUENCE IF EXISTS funds_id_seq CASCADE');
+    await client.query('DROP SEQUENCE IF EXISTS category_averages_id_seq CASCADE');
     console.log('  ✅ Cleaned up sequences');
     
     console.log('Step 4: Verifying clean state...');
@@ -55,7 +68,7 @@ async function flushDatabase() {
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = 'public' 
-      AND table_name LIKE 'funds%'
+      AND (table_name LIKE 'funds%' OR table_name LIKE 'category_averages%')
     `);
     
     if (remainingTables.rows.length === 0) {
@@ -72,6 +85,7 @@ async function flushDatabase() {
     console.log('\n🎉 Database flush completed successfully!');
     console.log('📊 Summary:');
     console.log('  • funds table deleted');
+    console.log('  • category_averages table deleted');
     console.log('  • All indexes removed');
     console.log('  • Sequences cleaned up');
     console.log('  • Database is now completely clean');

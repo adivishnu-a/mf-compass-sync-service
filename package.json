@@ -1,6 +1,6 @@
 {
   "name": "mf-compass-sync-service",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Mutual fund data sync service with intelligent filtering and automated scoring",
   "main": "index.js",
   "scripts": {

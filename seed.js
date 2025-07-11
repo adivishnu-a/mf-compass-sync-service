@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 require('dotenv').config();
+const axios = require('axios');
 
 // Import service modules
 const kuveraListService = require('./kuvera-list-service');
@@ -53,13 +54,35 @@ async function seedDatabase() {
     console.log('\n🗄️ Stage 4: Database Table Creation');
     await createDatabaseTables();
     
-    // Stage 5: Data Processing & Storage
-    console.log('\n💾 Stage 5: Data Processing & Storage');
+    // Stage 5: Category Averages Processing
+    console.log('\n📈 Stage 5: Category Averages Processing');
+    await processCategoryAverages();
+    
+    // Stage 6: Data Processing & Storage
+    console.log('\n💾 Stage 6: Data Processing & Storage');
     await processAndStoreFunds(filteredFunds);
     
-    // Stage 6: Score Calculation & Normalization
-    console.log('\n📈 Stage 6: Score Calculation & Normalization');
+    // Stage 7: Score Calculation & Normalization
+    console.log('\n📈 Stage 7: Score Calculation & Normalization');
     await calculateAndNormalizeScores();
+    
+    // Stage 8: Remove funds with total_score < 70
+    console.log('\n🧹 Stage 8: Removing funds with total_score < 70');
+    const client = await pool.connect();
+    try {
+      const res = await client.query('DELETE FROM funds WHERE total_score < 70 RETURNING kuvera_code, scheme_name, total_score');
+      console.log(`Removed ${res.rowCount} funds with total_score < 70`);
+      if (res.rowCount > 0) {
+        res.rows.slice(0, 5).forEach(row => {
+          console.log(`  - ${row.scheme_name} (score: ${row.total_score})`);
+        });
+        if (res.rowCount > 5) {
+          console.log(`  ...and ${res.rowCount - 5} more`);
+        }
+      }
+    } finally {
+      client.release();
+    }
     
     console.log('\n✅ Database seeding completed successfully!');
     console.log(`📊 Total funds processed: ${filteredFunds.length}`);
@@ -74,6 +97,7 @@ async function seedDatabase() {
 
 async function checkExistingData() {
   const client = await pool.connect();
+  await client.query("SET TIME ZONE 'Asia/Kolkata'");
   
   try {
     // Check if funds table exists and has data
@@ -184,6 +208,7 @@ async function applyAdvancedFilters(fundDetails) {
     rating: 0,
     aum: 0,
     dataIntegrity: 0,
+    indexFund: 0,
     passed: 0
   };
   
@@ -222,7 +247,7 @@ async function applyAdvancedFilters(fundDetails) {
     
     // 3.2 Quality Filters
     // Fund Rating: Exclude poorly rated funds (1, 2, 3)
-    if (fund.fund_rating && [1, 2, 3].includes(fund.fund_rating)) {
+    if (fund.fund_rating && [1, 2].includes(fund.fund_rating)) {
       filterStats.rating++;
       passesFilter = false;
       continue;
@@ -242,6 +267,13 @@ async function applyAdvancedFilters(fundDetails) {
       continue;
     }
     
+    // 3.4 Exclude Index Funds containing 'Nifty' anywhere in the name (case-insensitive)
+    if (fund.name && fund.name.toLowerCase().includes('nifty')) {
+      filterStats.indexFund = (filterStats.indexFund || 0) + 1;
+      passesFilter = false;
+      continue;
+    }
+    
     if (passesFilter) {
       filteredFunds.push(fund);
       filterStats.passed++;
@@ -257,6 +289,7 @@ async function applyAdvancedFilters(fundDetails) {
   console.log(`  - Failed rating check: ${filterStats.rating}`);
   console.log(`  - Failed AUM check: ${filterStats.aum}`);
   console.log(`  - Failed data integrity check: ${filterStats.dataIntegrity}`);
+  console.log(`  - Excluded index funds named 'Nifty': ${filterStats.indexFund || 0}`);
   console.log(`  - Passed all filters: ${filterStats.passed}`);
   
   return filteredFunds;
@@ -264,6 +297,7 @@ async function applyAdvancedFilters(fundDetails) {
 
 async function createDatabaseTables() {
   const client = await pool.connect();
+  await client.query("SET TIME ZONE 'Asia/Kolkata'");
   
   try {
     await client.query('BEGIN');
@@ -331,15 +365,37 @@ async function createDatabaseTables() {
       )
     `);
     
+    console.log('🗄️ Creating category_averages table...');
+    
+    // Create category averages table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS category_averages (
+        id SERIAL PRIMARY KEY,
+        category_name TEXT UNIQUE NOT NULL,
+        report_date DATE NOT NULL,
+        returns_1w DECIMAL(8,4),
+        returns_1y DECIMAL(8,4),
+        returns_3y DECIMAL(8,4),
+        returns_5y DECIMAL(8,4),
+        returns_inception DECIMAL(8,4),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
     console.log('📇 Creating database indexes...');
     
-    // Create performance indexes
+    // Create performance indexes for funds table
     await client.query(`CREATE INDEX IF NOT EXISTS idx_funds_kuvera_code ON funds(kuvera_code)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_funds_isin ON funds(isin)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_funds_fund_category ON funds(fund_category)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_funds_fund_house ON funds(fund_house)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_funds_fund_type ON funds(fund_type)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_funds_total_score ON funds(total_score DESC)`);
+    
+    // Create indexes for category_averages table
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_category_averages_category_name ON category_averages(category_name)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_category_averages_report_date ON category_averages(report_date)`);
     
     await client.query('COMMIT');
     console.log('✅ Database tables and indexes created successfully');
@@ -353,10 +409,170 @@ async function createDatabaseTables() {
   }
 }
 
+async function processCategoryAverages() {
+  console.log('📈 Fetching and processing category averages...');
+  
+  try {
+    // Fetch category averages from Kuvera API
+    const categoryAveragesUrl = 'https://api.kuvera.in/mf/api/v4/fund_categories.json';
+    const response = await axios.get(categoryAveragesUrl, {
+      timeout: 15000,
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'MF-Compass-Sync-Service/2.0'
+      }
+    });
+    
+    if (!response.data || !Array.isArray(response.data)) {
+      throw new Error('Invalid category averages response from API');
+    }
+    
+    const categoryData = response.data;
+    console.log(`✅ Fetched ${categoryData.length} category averages from API`);
+    
+    // Filter for categories we're interested in
+    const relevantCategories = categoryData.filter(category => {
+      // Check if this category is in our allowed categories
+      const allowedEquityCategories = [
+        'Large Cap Fund',
+        'Mid Cap Fund', 
+        'Small Cap Fund',
+        'Flexi Cap Fund',
+        'ELSS'
+      ];
+      
+      const allowedHybridCategories = [
+        'Aggressive Hybrid Fund',
+        'Dynamic Asset Allocation or Balanced Advantage',
+        'Multi Asset Allocation'
+      ];
+      
+      return allowedEquityCategories.includes(category.category_name) || 
+             allowedHybridCategories.includes(category.category_name);
+    });
+    
+    console.log(`📊 Found ${relevantCategories.length} relevant categories`);
+    
+    // Separate hybrid and equity categories
+    const hybridCategories = relevantCategories.filter(cat => 
+      ['Aggressive Hybrid Fund', 'Dynamic Asset Allocation or Balanced Advantage', 'Multi Asset Allocation'].includes(cat.category_name)
+    );
+    
+    const equityCategories = relevantCategories.filter(cat => 
+      ['Large Cap Fund', 'Mid Cap Fund', 'Small Cap Fund', 'Flexi Cap Fund', 'ELSS'].includes(cat.category_name)
+    );
+    
+    // Process categories for database storage
+    const processedCategories = [];
+    
+    // Add equity categories directly
+    equityCategories.forEach(category => {
+      processedCategories.push({
+        category_name: category.category_name,
+        report_date: category.report_date,
+        returns_1w: category.week_1,
+        returns_1y: category.year_1,
+        returns_3y: category.year_3,
+        returns_5y: category.year_5,
+        returns_inception: category.inception
+      });
+    });
+    
+    // Average the hybrid categories and save as "Hybrid"
+    if (hybridCategories.length > 0) {
+      const hybridAverage = {
+        category_name: 'Hybrid',
+        report_date: hybridCategories[0].report_date, // Use the first date (should be same for all)
+        returns_1w: 0,
+        returns_1y: 0,
+        returns_3y: 0,
+        returns_5y: 0,
+        returns_inception: 0
+      };
+      
+      // Calculate averages for each time period
+      const returnFields = ['week_1', 'year_1', 'year_3', 'year_5', 'inception'];
+      const targetFields = ['returns_1w', 'returns_1y', 'returns_3y', 'returns_5y', 'returns_inception'];
+      
+      returnFields.forEach((field, index) => {
+        const validValues = hybridCategories
+          .map(cat => cat[field])
+          .filter(val => val !== null && val !== undefined && !isNaN(val));
+        
+        if (validValues.length > 0) {
+          hybridAverage[targetFields[index]] = validValues.reduce((sum, val) => sum + val, 0) / validValues.length;
+        }
+      });
+      
+      processedCategories.push(hybridAverage);
+      
+      console.log(`📊 Averaged ${hybridCategories.length} hybrid categories into "Hybrid" category`);
+    }
+    
+    // Store in database
+    await storeCategoryAverages(processedCategories);
+    
+    console.log('✅ Category averages processed and stored successfully');
+    
+  } catch (error) {
+    console.error('❌ Category averages processing failed:', error.message);
+    throw error;
+  }
+}
+
+async function storeCategoryAverages(categories) {
+  const client = await pool.connect();
+  await client.query("SET TIME ZONE 'Asia/Kolkata'");
+  
+  try {
+    await client.query('BEGIN');
+    
+    console.log(`💾 Storing ${categories.length} category averages...`);
+    
+    for (const category of categories) {
+      await client.query(`
+        INSERT INTO category_averages (
+          category_name, report_date, returns_1w, returns_1y, returns_3y, returns_5y, returns_inception, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+        ON CONFLICT (category_name) DO UPDATE SET
+          report_date = EXCLUDED.report_date,
+          returns_1w = EXCLUDED.returns_1w,
+          returns_1y = EXCLUDED.returns_1y,
+          returns_3y = EXCLUDED.returns_3y,
+          returns_5y = EXCLUDED.returns_5y,
+          returns_inception = EXCLUDED.returns_inception,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        category.category_name,
+        category.report_date,
+        category.returns_1w,
+        category.returns_1y,
+        category.returns_3y,
+        category.returns_5y,
+        category.returns_inception
+      ]);
+      
+      console.log(`  ✓ ${category.category_name} - Report Date: ${category.report_date}`);
+    }
+    
+    await client.query('COMMIT');
+    console.log('✅ Category averages stored successfully');
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error storing category averages:', error.message);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function processAndStoreFunds(funds) {
   console.log(`💾 Processing and storing ${funds.length} funds...`);
   
   const client = await pool.connect();
+  await client.query("SET TIME ZONE 'Asia/Kolkata'");
+  
   const batchSize = 10;
   let processedCount = 0;
   
@@ -448,7 +664,10 @@ async function processSingleFund(client, fund) {
     fundManagers = managerNames.length > 0 ? JSON.stringify(managerNames) : null;
   }
   
-  // Calculate initial raw score
+  // Get category averages for scoring
+  const categoryAverages = await getCategoryAveragesForScoring(client);
+  
+  // Calculate initial raw score with category averages
   const fundDataForScoring = {
     returns_1y: returns1y,
     returns_3y: returns3y,
@@ -458,10 +677,12 @@ async function processSingleFund(client, fund) {
     fund_rating: fundRating,
     volatility: volatility,
     aum: aumInCrores,
-    start_date: startDate
+    start_date: startDate,
+    fund_category: fund.fund_category,
+    fund_type: fundType
   };
   
-  const scoreResult = scoringUtils.calculateFundScore(fundDataForScoring);
+  const scoreResult = scoringUtils.calculateFundScore(fundDataForScoring, categoryAverages);
   
   // 5.3 Database Insertion
   await client.query(`
@@ -556,27 +777,86 @@ async function processSingleFund(client, fund) {
   ]);
 }
 
+async function getCategoryAveragesForScoring(client) {
+  try {
+    const result = await client.query(`
+      SELECT category_name, returns_1w, returns_1y, returns_3y, returns_5y, returns_inception
+      FROM category_averages
+    `);
+    
+    const categoryAverages = {};
+    result.rows.forEach(row => {
+      categoryAverages[row.category_name] = {
+        returns_1w: row.returns_1w,
+        returns_1y: row.returns_1y,
+        returns_3y: row.returns_3y,
+        returns_5y: row.returns_5y,
+        returns_inception: row.returns_inception
+      };
+    });
+    
+    return categoryAverages;
+  } catch (error) {
+    console.warn('Failed to fetch category averages for scoring:', error.message);
+    return null; // Fall back to absolute returns scoring
+  }
+}
+
 async function calculateAndNormalizeScores() {
   console.log('📈 Calculating and normalizing fund scores...');
   
   const client = await pool.connect();
+  await client.query("SET TIME ZONE 'Asia/Kolkata'");
   
   try {
     await client.query('BEGIN');
     
-    // Fetch all funds with their scores and categories
+    // Get category averages for scoring
+    const categoryAverages = await getCategoryAveragesForScoring(client);
+    
+    // Fetch all funds with their data for scoring
     const result = await client.query(`
-      SELECT id, kuvera_code, scheme_name, fund_category, fund_type, total_score
+      SELECT id, kuvera_code, scheme_name, fund_category, fund_type, 
+             returns_1y, returns_3y, returns_5y, returns_1w, returns_inception,
+             fund_rating, volatility, aum, start_date, total_score
       FROM funds
-      WHERE total_score IS NOT NULL
       ORDER BY fund_type, fund_category, total_score DESC
     `);
     
-    const fundsWithScores = result.rows;
-    console.log(`📊 Found ${fundsWithScores.length} funds with scores`);
+    const fundsData = result.rows;
+    console.log(`📊 Recalculating scores for ${fundsData.length} funds with category averages...`);
+    
+    // Recalculate scores for all funds with category averages
+    for (const fund of fundsData) {
+      const fundDataForScoring = {
+        returns_1y: fund.returns_1y,
+        returns_3y: fund.returns_3y,
+        returns_5y: fund.returns_5y,
+        returns_1w: fund.returns_1w,
+        returns_inception: fund.returns_inception,
+        fund_rating: fund.fund_rating,
+        volatility: fund.volatility,
+        aum: fund.aum,
+        start_date: fund.start_date,
+        fund_category: fund.fund_category,
+        fund_type: fund.fund_type
+      };
+      
+      const scoreResult = scoringUtils.calculateFundScore(fundDataForScoring, categoryAverages);
+      
+      // Update fund score in database
+      await client.query(`
+        UPDATE funds 
+        SET total_score = $1, score_updated = CURRENT_TIMESTAMP
+        WHERE id = $2
+      `, [scoreResult.total_score, fund.id]);
+      
+      // Update the fund object for normalization
+      fund.total_score = scoreResult.total_score;
+    }
     
     // Normalize scores using scoring utils
-    const normalizedFunds = scoringUtils.normalizeFundScores(fundsWithScores);
+    const normalizedFunds = scoringUtils.normalizeFundScores(fundsData);
     
     // Update database with normalized scores
     for (const fund of normalizedFunds) {
