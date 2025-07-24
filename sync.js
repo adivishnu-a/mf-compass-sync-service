@@ -17,78 +17,49 @@ async function seedDatabase() {
   
   try {
     // Stage 0: Pre-flight Check
-    console.log('📋 Stage 0: Pre-flight Check');
+    console.log('Stage 0: Pre-flight Check');
     const skipSeeding = await checkExistingData();
-    
     if (skipSeeding) {
-      console.log('⚠️ Database already contains fund data. Skipping seeding.');
-      console.log('💡 Run flush operation first if you want to reseed.');
+      console.log('Database already contains fund data. Skipping seeding.');
       return;
     }
-    
     // Stage 1: Initial Fund Discovery
-    console.log('\n🔍 Stage 1: Initial Fund Discovery');
+    console.log('Stage 1: Initial Fund Discovery');
     const fundCodes = await discoverFunds();
-    
-    if (fundCodes.length === 0) {
-      throw new Error('No eligible funds found during discovery');
-    }
-    
+    if (fundCodes.length === 0) throw new Error('No eligible funds found during discovery');
     // Stage 2: Detailed Information Retrieval
-    console.log('\n📊 Stage 2: Detailed Information Retrieval');
+    console.log('Stage 2: Detailed Information Retrieval');
     const fundDetails = await retrieveFundDetails(fundCodes);
-    
-    if (fundDetails.length === 0) {
-      throw new Error('No valid fund details retrieved');
-    }
-    
+    if (fundDetails.length === 0) throw new Error('No valid fund details retrieved');
     // Stage 3: Advanced Filtering
-    console.log('\n🎯 Stage 3: Advanced Filtering');
+    console.log('Stage 3: Advanced Filtering');
     const filteredFunds = await applyAdvancedFilters(fundDetails);
-    
-    if (filteredFunds.length === 0) {
-      throw new Error('No funds passed advanced filtering');
-    }
-    
+    if (filteredFunds.length === 0) throw new Error('No funds passed advanced filtering');
     // Stage 4: Database Table Creation
-    console.log('\n🗄️ Stage 4: Database Table Creation');
+    console.log('Stage 4: Database Table Creation');
     await createDatabaseTables();
-    
     // Stage 5: Category Averages Processing
-    console.log('\n📈 Stage 5: Category Averages Processing');
+    console.log('Stage 5: Category Averages Processing');
     await processCategoryAverages();
-    
     // Stage 6: Data Processing & Storage
-    console.log('\n💾 Stage 6: Data Processing & Storage');
+    console.log('Stage 6: Data Processing & Storage');
     await processAndStoreFunds(filteredFunds);
-    
     // Stage 7: Score Calculation & Normalization
-    console.log('\n📈 Stage 7: Score Calculation & Normalization');
+    console.log('Stage 7: Score Calculation & Normalization');
     await calculateAndNormalizeScores();
-    
     // Stage 8: Remove funds with total_score < 70
-    console.log('\n🧹 Stage 8: Removing funds with total_score < 70');
+    console.log('Stage 8: Removing funds with total_score < 70');
     const client = await pool.connect();
     try {
-      const res = await client.query('DELETE FROM funds WHERE total_score < 70 RETURNING kuvera_code, scheme_name, total_score');
-      console.log(`Removed ${res.rowCount} funds with total_score < 70`);
-      if (res.rowCount > 0) {
-        res.rows.slice(0, 5).forEach(row => {
-          console.log(`  - ${row.scheme_name} (score: ${row.total_score})`);
-        });
-        if (res.rowCount > 5) {
-          console.log(`  ...and ${res.rowCount - 5} more`);
-        }
-      }
+      const { rowCount } = await client.query('DELETE FROM funds WHERE total_score < 70');
+      console.log(`Removed ${rowCount} funds with total_score < 70`);
     } finally {
       client.release();
     }
-    
-    console.log('\n✅ Database seeding completed successfully!');
-    console.log(`📊 Total funds processed: ${filteredFunds.length}`);
-    
+    console.log('Seeding completed.');
+    console.log(`Total funds processed: ${filteredFunds.length}`);
   } catch (error) {
-    console.error('\n❌ Database seeding failed:', error.message);
+    console.error('Seeding failed:', error.message);
     throw error;
   } finally {
     await pool.end();
@@ -158,8 +129,8 @@ async function retrieveFundDetails(fundCodes) {
   console.log(`📊 Fetching detailed information for ${fundCodes.length} funds...`);
   
   try {
-    const batchSize = 5;
-    const delayMs = 200;
+    const batchSize = 10; // Slightly larger batch size
+    const delayMs = 100; // Reduced delay between batches
     
     const results = await kuveraListService.getFundDetailsBatch(fundCodes, batchSize, delayMs);
     
@@ -246,15 +217,15 @@ async function applyAdvancedFilters(fundDetails) {
     }
     
     // 3.2 Quality Filters
-    // Fund Rating: Exclude poorly rated funds (1, 2, 3)
-    if (fund.fund_rating && [1, 2].includes(fund.fund_rating)) {
+    // Fund Rating: Exclude only 1, 2 star funds
+    if (fund.fund_rating && [1, 2].includes(parseInt(fund.fund_rating))) {
       filterStats.rating++;
       passesFilter = false;
       continue;
     }
     
     // AUM Threshold: Minimum ₹10 crores
-    if (fund.aum && (fund.aum / 10) < 10) {
+    if (!fund.aum || (fund.aum / 10) < 10) {
       filterStats.aum++;
       passesFilter = false;
       continue;
@@ -431,41 +402,21 @@ async function processCategoryAverages() {
     console.log(`✅ Fetched ${categoryData.length} category averages from API`);
     
     // Filter for categories we're interested in
-    const relevantCategories = categoryData.filter(category => {
-      // Check if this category is in our allowed categories
-      const allowedEquityCategories = [
-        'Large Cap Fund',
-        'Mid Cap Fund', 
-        'Small Cap Fund',
-        'Flexi Cap Fund',
-        'ELSS'
-      ];
-      
-      const allowedHybridCategories = [
-        'Aggressive Hybrid Fund',
-        'Dynamic Asset Allocation or Balanced Advantage',
-        'Multi Asset Allocation'
-      ];
-      
-      return allowedEquityCategories.includes(category.category_name) || 
-             allowedHybridCategories.includes(category.category_name);
-    });
+    const allowedEquityCategories = [
+      'Large Cap Fund',
+      'Mid Cap Fund',
+      'Small Cap Fund',
+      'Flexi Cap Fund'
+    ];
+    const relevantCategories = categoryData.filter(category =>
+      allowedEquityCategories.includes(category.category_name)
+    );
     
     console.log(`📊 Found ${relevantCategories.length} relevant categories`);
     
-    // Separate hybrid and equity categories
-    const hybridCategories = relevantCategories.filter(cat => 
-      ['Aggressive Hybrid Fund', 'Dynamic Asset Allocation or Balanced Advantage', 'Multi Asset Allocation'].includes(cat.category_name)
-    );
-    
-    const equityCategories = relevantCategories.filter(cat => 
-      ['Large Cap Fund', 'Mid Cap Fund', 'Small Cap Fund', 'Flexi Cap Fund', 'ELSS'].includes(cat.category_name)
-    );
-    
-    // Process categories for database storage
+    // Only process equity categories for DB
+    const equityCategories = relevantCategories.filter(cat => ['Large Cap Fund', 'Mid Cap Fund', 'Small Cap Fund', 'Flexi Cap Fund'].includes(cat.category_name));
     const processedCategories = [];
-    
-    // Add equity categories directly
     equityCategories.forEach(category => {
       processedCategories.push({
         category_name: category.category_name,
@@ -477,37 +428,6 @@ async function processCategoryAverages() {
         returns_inception: category.inception
       });
     });
-    
-    // Average the hybrid categories and save as "Hybrid"
-    if (hybridCategories.length > 0) {
-      const hybridAverage = {
-        category_name: 'Hybrid',
-        report_date: hybridCategories[0].report_date, // Use the first date (should be same for all)
-        returns_1w: 0,
-        returns_1y: 0,
-        returns_3y: 0,
-        returns_5y: 0,
-        returns_inception: 0
-      };
-      
-      // Calculate averages for each time period
-      const returnFields = ['week_1', 'year_1', 'year_3', 'year_5', 'inception'];
-      const targetFields = ['returns_1w', 'returns_1y', 'returns_3y', 'returns_5y', 'returns_inception'];
-      
-      returnFields.forEach((field, index) => {
-        const validValues = hybridCategories
-          .map(cat => cat[field])
-          .filter(val => val !== null && val !== undefined && !isNaN(val));
-        
-        if (validValues.length > 0) {
-          hybridAverage[targetFields[index]] = validValues.reduce((sum, val) => sum + val, 0) / validValues.length;
-        }
-      });
-      
-      processedCategories.push(hybridAverage);
-      
-      console.log(`📊 Averaged ${hybridCategories.length} hybrid categories into "Hybrid" category`);
-    }
     
     // Store in database
     await storeCategoryAverages(processedCategories);

@@ -10,19 +10,13 @@ class KuveraListService {
       'User-Agent': 'MF-Compass-Sync-Service/2.0'
     };
     
-    // Allowed fund categories configuration
+    // Only keep equity asset class and only Large/Mid/Small/Flexi Cap categories
     this.allowedCategories = {
       'Equity': [
         'Large Cap Fund',
         'Mid Cap Fund',
         'Small Cap Fund',
-        'Flexi Cap Fund',
-        'ELSS'
-      ],
-      'Hybrid': [
-        'Aggressive Hybrid Fund',
-        'Dynamic Asset Allocation or Balanced Advantage',
-        'Multi Asset Allocation'
+        'Flexi Cap Fund'
       ]
     };
   }
@@ -39,12 +33,11 @@ class KuveraListService {
         
         // Validate response structure
         const hasEquity = data.Equity && typeof data.Equity === 'object';
-        const hasHybrid = data.Hybrid && typeof data.Hybrid === 'object';
         
-        if (hasEquity && hasHybrid) {
+        if (hasEquity) {
           return true;
         } else {
-          throw new Error('Expected asset classes (Equity/Hybrid) not found in API response');
+          throw new Error('Expected asset class (Equity) not found in API response');
         }
       }
       
@@ -70,13 +63,12 @@ class KuveraListService {
       const data = response.data;
       const filteredFunds = [];
       
-      // Process each asset class
+      // Only process equity asset class
       for (const [assetClass, categories] of Object.entries(this.allowedCategories)) {
-        if (!data[assetClass]) {
+        if (assetClass !== 'Equity' || !data[assetClass]) {
           continue;
         }
-        
-        // Process each allowed category
+        // Only process allowed equity categories
         for (const category of categories) {
           if (!data[assetClass][category]) {
             continue;

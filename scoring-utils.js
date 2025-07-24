@@ -58,8 +58,6 @@ class ScoringUtils {
     let categoryName;
     if (fund_type && fund_type.toLowerCase().includes('equity')) {
       categoryName = fund_category; // Use fund_category for equity funds
-    } else if (fund_type && fund_type.toLowerCase().includes('hybrid')) {
-      categoryName = 'Hybrid'; // Use "Hybrid" for hybrid funds
     } else {
       categoryName = fund_category; // Default to fund_category for other funds
     }
@@ -184,8 +182,6 @@ class ScoringUtils {
     let categoryName;
     if (fund_type && fund_type.toLowerCase().includes('equity')) {
       categoryName = fund_category;
-    } else if (fund_type && fund_type.toLowerCase().includes('hybrid')) {
-      categoryName = 'Hybrid';
     } else {
       categoryName = fund_category;
     }
@@ -310,10 +306,6 @@ class ScoringUtils {
         if (fund.fund_type && fund.fund_type.toLowerCase().includes('equity')) {
           categoryKey = fund.fund_category || 'equity_other';
         } 
-        // For hybrid funds, group by fund_type
-        else if (fund.fund_type && fund.fund_type.toLowerCase().includes('hybrid')) {
-          categoryKey = fund.fund_type || 'hybrid_other';
-        } 
         // For other funds, group by fund_category
         else {
           categoryKey = fund.fund_category || 'unknown';
@@ -378,8 +370,6 @@ class ScoringUtils {
       
       if (fund.fund_type && fund.fund_type.toLowerCase().includes('equity')) {
         categoryKey = fund.fund_category || 'equity_other';
-      } else if (fund.fund_type && fund.fund_type.toLowerCase().includes('hybrid')) {
-        categoryKey = fund.fund_type || 'hybrid_other';
       } else {
         categoryKey = fund.fund_category || 'unknown';
       }
@@ -462,13 +452,12 @@ class ScoringUtils {
       process: [
         '1. Calculate outperformance (fund_return - category_average) for each period',
         '2. Apply weighted scoring based on available outperformance data',
-        '3. Group funds by category (equity by fund_category, hybrid by fund_type)',
+        '3. Group funds by category (equity by fund_category)',
         '4. Normalize scores within each category to 50-100 range',
         '5. Linear scaling: (score - min) / (max - min) * 50 + 50'
       ],
       category_matching: {
         'equity_funds': 'Match fund_category with category_averages.category_name',
-        'hybrid_funds': 'Match fund_type with "Hybrid" category_averages.category_name',
         'fallback': 'Use absolute returns if no category averages available'
       }
     };

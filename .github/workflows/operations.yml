@@ -1,17 +1,20 @@
-name: Weekly MF Data Rebuild
+name: Manual Database Operations
 
 on:
-  schedule:
-    # Run at 1:00 AM IST (19:30 UTC previous day) on Sunday only
-    - cron: '30 19 * * 6'
-  push:
-    # Trigger rebuild when code is pushed to main branch to ensure database stays in sync with latest changes
-    branches: [ main ]
   workflow_dispatch:
-    # Also allow manual triggering
+    inputs:
+      operation:
+        description: 'Choose database operation'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - sync
+          - flush
 
 jobs:
-  rebuild-database:
+  manual-operation:
     runs-on: ubuntu-latest
     
     steps:
@@ -28,20 +31,23 @@ jobs:
     - name: Install dependencies
       run: npm ci
     
-    - name: Test Database Connection
+    - name: Run Test
+      if: ${{ github.event.inputs.operation == 'test' }}
       run: npm run test
       env:
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
         NODE_ENV: production
     
-    - name: Flush Database
-      run: npm run flush
+    - name: Run Sync
+      if: ${{ github.event.inputs.operation == 'sync' }}
+      run: npm run sync
       env:
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
         NODE_ENV: production
     
-    - name: Seed Database
-      run: npm run seed
+    - name: Run Flush
+      if: ${{ github.event.inputs.operation == 'flush' }}
+      run: npm run flush
       env:
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
         NODE_ENV: production
@@ -50,6 +56,6 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: rebuild-logs-${{ github.run_number }}
+        name: operation-logs-${{ github.event.inputs.operation }}-${{ github.run_number }}
         path: '*.log'
         retention-days: 7

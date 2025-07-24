@@ -1,42 +1,43 @@
-name: Daily MF Data Update
+name: Daily MF Data Sync
 
 on:
   schedule:
-    # Runs at 01:00 AM IST (19:30 UTC previous day) on Tuesday-Saturday (i.e., 19:30 UTC Monday-Friday)
-    - cron: '30 19 * * 1-5'
-    # Runs at 10:30 AM IST (05:00 UTC) on Tuesday-Saturday
-    - cron: '00 5 * * 2-6'
+    # Runs at 10:15 AM IST (04:45 UTC) on Tuesday-Saturday
+    - cron: '45 4 * * 2-6'
   workflow_dispatch:
     # Allow manual triggering
+  push:
+    branches:
+      - '**'
 
 jobs:
-  update-nav-data:
+  daily-sync:
     runs-on: ubuntu-latest
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
         cache-dependency-path: package.json
-    
     - name: Install dependencies
       run: npm ci
-    
-    - name: Run daily NAV update
-      run: npm run update
+    - name: Flush Database
+      run: npm run flush
       env:
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
         NODE_ENV: production
-    
+    - name: Sync Database
+      run: npm run sync
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        NODE_ENV: production
     - name: Upload logs (if failure)
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: update-logs-${{ github.run_number }}
+        name: sync-logs-${{ github.run_number }}
         path: '*.log'
         retention-days: 7
