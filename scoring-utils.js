@@ -73,28 +73,41 @@ class ScoringUtils {
     let totalAvailableWeight = 0;
     const outperformanceReturns = {};
     
+    // Calculate outperformance for each return period with sign-aware logic
+    function robustOutperformance(fund, cat) {
+      if (cat === null || cat === undefined || isNaN(cat)) return 0;
+      const denom = Math.max(Math.abs(cat), 1);
+      const outperf = (fund - cat) / denom;
+      if (fund < 0) {
+        // Penalize negative fund returns more strongly
+        const penaltyFactor = 1.5; // Increase for stronger penalty
+        return outperf * penaltyFactor;
+      }
+      return outperf;
+    }
+    
     // Calculate outperformance for each return period
     if (returns_1y !== null && returns_1y !== undefined && !isNaN(returns_1y) && 
         categoryAvg.returns_1y !== null && categoryAvg.returns_1y !== undefined && !isNaN(categoryAvg.returns_1y)) {
-      outperformanceReturns.returns_1y = (parseFloat(returns_1y) - parseFloat(categoryAvg.returns_1y))/parseFloat(categoryAvg.returns_1y);
+      outperformanceReturns.returns_1y = robustOutperformance(parseFloat(returns_1y), parseFloat(categoryAvg.returns_1y));
       totalAvailableWeight += this.baseWeights.returns_1y;
     }
     
     if (returns_3y !== null && returns_3y !== undefined && !isNaN(returns_3y) && 
         categoryAvg.returns_3y !== null && categoryAvg.returns_3y !== undefined && !isNaN(categoryAvg.returns_3y)) {
-      outperformanceReturns.returns_3y = (parseFloat(returns_3y) - parseFloat(categoryAvg.returns_3y))/parseFloat(categoryAvg.returns_3y);
+      outperformanceReturns.returns_3y = robustOutperformance(parseFloat(returns_3y), parseFloat(categoryAvg.returns_3y));
       totalAvailableWeight += this.baseWeights.returns_3y;
     }
     
     if (returns_5y !== null && returns_5y !== undefined && !isNaN(returns_5y) && 
         categoryAvg.returns_5y !== null && categoryAvg.returns_5y !== undefined && !isNaN(categoryAvg.returns_5y)) {
-      outperformanceReturns.returns_5y = (parseFloat(returns_5y) - parseFloat(categoryAvg.returns_5y))/parseFloat(categoryAvg.returns_5y);
+      outperformanceReturns.returns_5y = robustOutperformance(parseFloat(returns_5y), parseFloat(categoryAvg.returns_5y));
       totalAvailableWeight += this.baseWeights.returns_5y;
     }
     
     if (returns_1w !== null && returns_1w !== undefined && !isNaN(returns_1w) && 
         categoryAvg.returns_1w !== null && categoryAvg.returns_1w !== undefined && !isNaN(categoryAvg.returns_1w)) {
-      outperformanceReturns.returns_1w = (parseFloat(returns_1w) - parseFloat(categoryAvg.returns_1w))/parseFloat(categoryAvg.returns_1w);
+      outperformanceReturns.returns_1w = robustOutperformance(parseFloat(returns_1w), parseFloat(categoryAvg.returns_1w));
       totalAvailableWeight += this.baseWeights.returns_1w;
     }
     
