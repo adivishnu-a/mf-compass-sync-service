@@ -2,8 +2,8 @@ name: Daily MF Data Sync
 
 on:
   schedule:
-    # Runs at 10:15 AM IST (04:45 UTC) on Tuesday-Saturday
-    - cron: '45 4 * * 2-6'
+    # Runs at 11:00 AM IST (05:30 UTC) on Tuesday-Saturday
+    - cron: '30 5 * * 2-6'
   workflow_dispatch:
     # Allow manual triggering
   push:
